@@ -8,6 +8,7 @@ from networkx import Graph, spring_layout, draw_networkx, draw_networkx_edge_lab
 
 
 # Comments:
+# 0. Theory in: https://github.com/tomov/chunking/blob/28aefc5ff5066fb0c9b626d0bbfee35b6bd8fdbf/math/chunking.pdf
 # 1. Don't think re-using buckets allowed for MHwG (not that the difference is huge I think): http://www.stat.columbia.edu/npbayes/papers/neal_sampling.pdf
 # 2a. Given partially observed data, do we ever observe "not an edge"? Or observation always positive? Are nodes always observed?
 ### Ans: We do, otherwise the trivial flat hierarchy always dominates. Not quite realistic for human behaviour though.
@@ -95,7 +96,7 @@ class HierarchyModel:
     def log_prior(self):
         """ Computes log P(H) = log P(c) + log P(p) + log P(q). """
         logp = 0
-        curr = np.zeros(len(self.cnt))
+        curr = np.zeros(self.nclusters)
         curr[self.c[0]-1] = 1
         for i in range(1, self.D.N):
             c_i = self.c[i]
@@ -117,9 +118,11 @@ class HierarchyModel:
         temp2 = np.log(temp1 * 2 * pqs + pqs + temp1 * -1)
         return np.sum(np.triu(temp2, k=1))
 
-    def log_posterior(self):
+    def log_posterior(self, inference_type='offline'):
         """ Computes log P(H|D) = log P(D|H) + log P(H). """
-        return self.log_prior() + self.log_likelihood()
+        if inference_type == 'offline':
+            return self.log_prior() + self.log_likelihood()
+        return self.observed_log_posterior()
 
     def update_cluster(self, n, newc):
         """ Updates cluster of node n to newc. """
@@ -133,13 +136,13 @@ class HierarchyModel:
         else:
             self.cnt[newc-1] += 1
 
-    def offline_sampler(self, nsamples=1000, nburnin=0, nsampintv=1):
+    def offline_sampler(self, nsamples=5000, nburnin=1000, nsampintv=1, inference_type='offline'):
         """ Offline sampling of H using Metropolis-Hastings-within-Gibbs. """
 
         self.accepts = 0
         self.logpost_samples = []
         self.hsamples = dict()
-        for t in range(1, nburnin + nsamples * nsampintv + 1):
+        for t in range(nburnin + nsamples * nsampintv):
 
             # Sample c using Gibbs sampling for Dirichlet processes as in Neal (1998).
             for i in range(self.D.N):
@@ -149,9 +152,9 @@ class HierarchyModel:
                 proposal_dist = np.append(proposal_dist, self.alpha)
                 proposal_dist /= (self.D.N - 1 + self.alpha)
                 cand_i = np.where(np.random.multinomial(1, proposal_dist) == 1)[0][0] + 1
-                old_logpost = self.log_posterior()
+                old_logpost = self.log_posterior(inference_type=inference_type)
                 self.update_cluster(i, cand_i)
-                new_logpost = self.log_posterior()
+                new_logpost = self.log_posterior(inference_type=inference_type)
                 log_accept_ratio = min(0, new_logpost - old_logpost)
                 if np.log(np.random.uniform()) < log_accept_ratio:
                     self.accepts += 1
@@ -162,9 +165,10 @@ class HierarchyModel:
             old_p = self.p
             ll, uu = stats.norm.cdf(0, loc=old_p, scale=0.1), stats.norm.cdf(1, loc=old_p, scale=0.1)
             cand_p = stats.norm.ppf(stats.uniform.rvs(loc=ll, scale=uu-ll), loc=old_p, scale=0.1)
-            old_logpost = self.log_posterior()
+            assert(cand_p > 0 and cand_p < 1)
+            old_logpost = self.log_posterior(inference_type=inference_type)
             self.p = cand_p
-            new_logpost = self.log_posterior()
+            new_logpost = self.log_posterior(inference_type=inference_type)
             cdf_corr_new = np.log(stats.norm.cdf(1, loc=cand_p, scale=0.1) - stats.norm.cdf(0, loc=cand_p, scale=0.1))
             cdf_corr_old = np.log(stats.norm.cdf(1, loc=old_p, scale=0.1) - stats.norm.cdf(0, loc=old_p, scale=0.1))
             log_accept_ratio = min(0, new_logpost - old_logpost + cdf_corr_new - cdf_corr_old)
@@ -177,9 +181,10 @@ class HierarchyModel:
             old_q = self.q
             ll, uu = stats.norm.cdf(0, loc=old_q, scale=0.1), stats.norm.cdf(1, loc=old_q, scale=0.1)
             cand_q = stats.norm.ppf(stats.uniform.rvs(loc=ll, scale=uu-ll), loc=old_q, scale=0.1)
-            old_logpost = self.log_posterior()
+            assert(cand_q > 0 and cand_q < 1)
+            old_logpost = self.log_posterior(inference_type=inference_type)
             self.q = cand_q
-            new_logpost = self.log_posterior()
+            new_logpost = self.log_posterior(inference_type=inference_type)
             cdf_corr_new = np.log(stats.norm.cdf(1, loc=cand_q, scale=0.1) - stats.norm.cdf(0, loc=cand_q, scale=0.1))
             cdf_corr_old = np.log(stats.norm.cdf(1, loc=old_q, scale=0.1) - stats.norm.cdf(0, loc=old_q, scale=0.1))
             log_accept_ratio = min(0, new_logpost - old_logpost + cdf_corr_new - cdf_corr_old)
@@ -189,15 +194,25 @@ class HierarchyModel:
                 self.q = old_q
 
             # Statistics and collection.
-            self.logpost_samples.append(self.log_posterior())
-            if t <= nburnin:
-                if t % 100 == 0:
-                    print(f'{t} samples burnt-in. Acceptance rate: {100 * (self.accepts / (t * (self.D.N + 2))):.2f}%.')
+            self.logpost_samples.append(self.log_posterior(inference_type=inference_type))
+            if t < nburnin:
+                if (t + 1) % 100 == 0:
+                    print(f'{t+1} samples burnt-in. Acceptance rate: {100 * (self.accepts / ((t+1) * (self.D.N + 2))):.2f}%.')
             else:
-                if (t - nburnin) % nsampintv == 0:
-                    self.hsamples[t] = (self.c.copy(), self.p, self.q)
-                if (t - nburnin) % (100 * nsampintv) == 0:
-                    print(f'{(t - nburnin) / nsampintv} samples collected. Acceptance rate: {100 * (self.accepts / (t * (self.D.N + 2))):.2f}%.')
+                if (t + 1 - nburnin) % nsampintv == 0:
+                    self.hsamples[t] = (self.c.copy(), self.cnt.copy(), self.p, self.q)
+                if (t + 1 - nburnin) % (100 * nsampintv) == 0:
+                    print(f'{(t + 1 - nburnin) / nsampintv} samples collected. Acceptance rate: {100 * (self.accepts / ((t+1) * (self.D.N + 2))):.2f}%.')
+
+        self.bestk_samples(nburnin, nsamples, nsampintv)
+
+    def bestk_samples(self, nburnin, nsamples, nsampintv):
+        """ Sort the samples by P(H|D). """
+        self.best_hsamples = []
+        valids = np.argsort(np.array(self.logpost_samples)[nburnin+nsampintv-1::nsampintv])
+        assert(len(valids) == nsamples)
+        for k in valids:
+            self.best_hsamples.append(self.hsamples[nburnin + (k+1) * nsampintv - 1])
 
     def init_particles(self):
         """ Initialize particles using P(H). """
@@ -258,9 +273,11 @@ class HierarchyModel:
     def rejuvenate(self, niter=10):
         """ Perform iterations of MH-within-Gibbs and update particles. """
 
+        # Perform `niter` steps of MHwG independently for each particle.
         for t in range(1, niter + 1):
             for k in range(self.NP):
-                self.c, self.cnt, self.p, self.q = self.particles[k]
+                self.c, self.cnt = self.particles[k][0].copy(), self.particles[k][1].copy()
+                self.p, self.q = self.particles[k][2], self.particles[k][3]
                 self.nclusters = len(self.cnt)
 
                 for i in range(self.D.N):
@@ -278,9 +295,8 @@ class HierarchyModel:
                         self.update_cluster(i, old_i)
 
                 old_p = self.p
-                cand_p = -1
-                while cand_p < 0 or cand_p > 1:
-                    cand_p = np.random.normal(loc=old_p, scale=0.1)
+                ll, uu = stats.norm.cdf(0, loc=old_p, scale=0.1), stats.norm.cdf(1, loc=old_p, scale=0.1)
+                cand_p = stats.norm.ppf(stats.uniform.rvs(loc=ll, scale=uu-ll), loc=old_p, scale=0.1)
                 old_logpost = self.observed_log_posterior()
                 self.p = cand_p
                 new_logpost = self.observed_log_posterior()
@@ -292,9 +308,8 @@ class HierarchyModel:
 
                 # Sample q.
                 old_q = self.q
-                cand_q = -1
-                while cand_q < 0 or cand_q > 1:
-                    cand_q = np.random.normal(loc=old_q, scale=0.1)
+                ll, uu = stats.norm.cdf(0, loc=old_q, scale=0.1), stats.norm.cdf(1, loc=old_q, scale=0.1)
+                cand_q = stats.norm.ppf(stats.uniform.rvs(loc=ll, scale=uu-ll), loc=old_q, scale=0.1)
                 old_logpost = self.observed_log_posterior()
                 self.q = cand_q
                 new_logpost = self.observed_log_posterior()
@@ -304,9 +319,18 @@ class HierarchyModel:
                 if np.log(np.random.uniform()) > log_accept_ratio:
                     self.q = old_q
 
-                self.particles[k] = (self.c, self.cnt, self.p, self.q)
+                self.particles[k] = (self.c.copy(), self.cnt.copy(), self.p, self.q)
 
-    def online_sampler(self, NP=100000):
+        # Re-sample new particles and reset the weights to 1/NP.
+        new_indices = np.random.multinomial(self.NP, self.weights)
+        new_particles = []
+        for j in range(self.NP):
+            for _ in range(new_indices[j]):
+                new_particles.append(self.particles[j])
+        self.particles = new_particles
+        self.weights = np.array([1 / self.NP for _ in range(self.NP)])
+
+    def online_sampler(self, NP=50000):
         """ Online sampling of H using importance sampling + particle filtering. """
         self.NP = NP
         self.init_particles()
@@ -317,8 +341,10 @@ class HierarchyModel:
             self.update_weights(edge, is_in=False)
             #self.rejuvenate()
 
-    def unveil(self):
-        """ Decides which edge to unveil, from the list of unknown edges. """
+    def unveil(self, phdtype='full'):
+        """ Decides which edge to unveil, from the list of unknown edges.
+            For online inference, phdtype = 'full' or 'weight' to compute P(H|D).
+        """
         def olp(particle):
             self.c, self.cnt, self.p, self.q = particle
             self.nclusters = len(self.cnt)
@@ -334,29 +360,34 @@ class HierarchyModel:
         for edge in self.D.UK:
 
             # Compute H(H|D with edge) * P(edge|D).
-            # self.D.E.append(edge)
-            # logposts = np.array(list(map(olp, self.particles)))
-            uklogp = np.array(list(map(lambda pp: add_uk(edge, pp, True), self.particles)))
-            uklogpd = self.weights * np.exp(uklogp)
-            uklogpd /= np.sum(uklogpd)
-            with_entropy = -1 * np.sum(np.log(uklogpd) * self.weights)
-            # with_entropy = -1 * * np.sum(logposts * self.weights) np.sum(logposts * self.weights)
+            if phdtype == 'full':
+                self.D.E.append(edge)
+                logposts = np.array(list(map(olp, self.particles)))
+            else:
+                uklogp = np.array(list(map(lambda pp: add_uk(edge, pp, True), self.particles)))
+                uklogpd = self.weights * np.exp(uklogp)
+                uklogpd /= np.sum(uklogpd)
+                logposts = np.log(uklogpd)
+            with_entropy = -1 * np.sum(logposts * self.weights)
             logpeds = np.array(list(map(lambda pc: np.exp(self.singleton_log_likelihood(edge, pc[0], pc[2], pc[3])), self.particles)))
             with_prob = np.sum(logpeds * self.weights)
-            # self.D.E = self.D.E[:-1]
-
+            if phdtype == 'full':
+                self.D.E = self.D.E[:-1]
 
             # Compute H(H|D without edge) * P(no edge|D).
-            # self.D.NE.append(edge)
-            # logposts = np.array(list(map(olp, self.particles)))
-            uklogp = np.array(list(map(lambda pp: add_uk(edge, pp, False), self.particles)))
-            uklogpd = self.weights * np.exp(uklogp)
-            uklogpd /= np.sum(uklogpd)
-            without_entropy = -1 * np.sum(np.log(uklogpd) * self.weights)
-            # without_entropy = -1 * np.sum(logposts * self.weights)
+            if phdtype == 'full':
+                self.D.NE.append(edge)
+                logposts = np.array(list(map(olp, self.particles)))
+            else:
+                uklogp = np.array(list(map(lambda pp: add_uk(edge, pp, False), self.particles)))
+                uklogpd = self.weights * np.exp(uklogp)
+                uklogpd /= np.sum(uklogpd)
+                logposts = np.log(uklogpd)
+            without_entropy = -1 * np.sum(logposts * self.weights)
             logpeds = np.array(list(map(lambda pc: np.exp(self.singleton_neg_log_likelihood(edge, pc[0], pc[2], pc[3])), self.particles)))
             without_prob = np.sum(logpeds * self.weights)
-            # self.D.NE = self.D.NE[:-1]
+            if phdtype == 'full':
+                self.D.NE = self.D.NE[:-1]
 
             self.action_entropys.append(with_entropy * with_prob + without_entropy * without_prob)
 
@@ -416,7 +447,7 @@ class HierarchyModel:
 
         # Displaying H.
         for bidx in range(1, 6):
-            bestc = self.hsamples[np.argsort(self.logpost_samples)[-bidx] + 1][0]
+            bestc = self.best_hsamples[-bidx][0]
             print(f'No. {bidx} clustering: {bestc}.')
             colormap = dict()
             r = lambda: np.random.randint(low=0, high=256)
@@ -436,30 +467,108 @@ class HierarchyModel:
             elif action == 'show':
                 plt.show()
 
+    def plot_christmas_graph(self, action='save'):
+        """ Plot graph for human experiments. """
+        ng = Graph()
+        for i in range(self.D.N):
+            ng.add_node(i + 1)
+        for u, v in self.D.E:
+            ng.add_edge(u, v, llabel='')
+        chrval = 65
+        for w in range(len(self.D.UK)):
+            ng.add_edge(self.D.UK[w][0], self.D.UK[w][1], llabel=chr(chrval))
+            chrval += 1
+        colormap = []
+        for ee in ng.edges:
+            if ee in self.D.UK:
+                colormap.append('red')
+            else:
+                colormap.append('black')
+        plt.figure()
+        plt.axis('off')
+        pos = spring_layout(ng)
+        draw_networkx(ng, pos, with_labels=False, node_color='black', edge_color=colormap)
+        edge_labels = get_edge_attributes(ng, 'llabel')
+        draw_networkx_edge_labels(ng, pos, edge_labels=edge_labels, font_color='red', font_weight='bold', font_size=14)
+        if action == 'save':
+            plt.savefig(f'christmas_{self.D.name}.png')
+        elif action == 'show':
+            plt.show()
 
 def demo1(fname):
     """ Perform offline inference on a given (completely observed) graph and display results. """
     h = {'alpha': 1.5}
     D = Data(fname)
     hm = HierarchyModel(D, h)
-    hm.offline_sampler()
+    hm.offline_sampler(nsamples=1000, nburnin=0)
     hm.plot_graphs()
 
-def demo2(fname):
+def demo2(fname, inference_type='offline'):
     """ Perform online inference on a partially observed graph, and make a decision on which edge to unveil next. """
     h = {'alpha': 1.5}
     D = Data(fname, fully_observed=False)
     hm = HierarchyModel(D, h)
-    hm.online_sampler()
-    print('Top particles after online sampling:')
-    for top in np.argsort(hm.weights)[-5:]:
-        print(hm.particles[top][0])
-    print('Unveiling edges...')
-    hm.unveil()
-    hm.plot_partial_graph()
+    if inference_type == 'offline':
+        hm.offline_sampler(inference_type='online')
+        # print('Top particles after offline sampling:')
+        # for top in hm.best_hsamples[-5:]:
+        #     print(top[0])
+
+        # Testing with MAP.
+        hm.particles = []
+        for top in hm.best_hsamples[round(0.9 * len(hm.best_hsamples)):]:
+            hm.particles.append(top)
+            print(top[0])
+        hm.NP = len(hm.particles)
+        hm.weights = np.array([1 / hm.NP for _ in range(hm.NP)])
+        print('Unveiling edges...')
+        hm.unveil()
+        hm.plot_partial_graph()
+
+        # Testing with full offline posterior.
+        hm.particles = hm.best_hsamples
+        hm.NP = len(hm.particles)
+        hm.weights = np.array([1 / hm.NP for _ in range(hm.NP)])
+        print('Unveiling edges...')
+        hm.unveil()
+        hm.plot_partial_graph()
+    else:
+        hm.online_sampler()
+        print('Top particles after online sampling:')
+        for top in np.argsort(hm.weights)[-5:]:
+            print(hm.particles[top][0])
+        print('Unveiling edges...')
+        hm.unveil()
+        hm.plot_partial_graph()
 
 
-#demo1('data/solway2.txt')
+#demo1('data/demon.txt')
+demo2('data/partial_demon.txt', 'online')
 #demo2('data/partial_hourglass.txt')
 #demo2('data/partial_solway1.txt')
 #demo2('data/partial_solway2.txt')
+
+def plot_model_results(action='save'):
+    """ Plot model results. """
+    plt.figure()
+    plt.rc('font',size=14)
+    plt.rc('axes',titlesize=14)
+    plt.rc('axes',labelsize=14)
+    plt.title(f'Model Results')
+    plt.xlabel('Graph')
+    plt.ylabel('Fraction of Trials where Edge A unveiled')
+    ax = plt.gca()
+    #plt.bar()
+    #plt.xticks()
+    low95, high95 = stats.binom.ppf(0.025,n=50, p=0.5) / 50, stats.binom.ppf(0.975,n=50, p=0.5) / 50
+    plt.axhline(y=low95, alpha=0.4, color='red')
+    plt.axhline(y=high95, alpha=0.4, color='red')
+    ax.axhspan(low95, high95, facecolor='red', alpha=0.4)
+    plt.axhline(y=0.5, linestyle='--', color='black')
+    if action == 'save':
+        plt.savefig('model_results.png')
+    elif action == 'show':
+        plt.show()
+
+#plot_model_results('show')
+
