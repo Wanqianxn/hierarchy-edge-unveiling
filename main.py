@@ -34,7 +34,8 @@ class Data:
         """ Creates adjacency matrix graph representation. """
         with open(fname) as f:
             self.name = f.readline().rstrip('\n')
-            self.N, self.M = list(map(int, f.readline().split()))
+            self.N, self.M, self.UK = list(map(int, f.readline().split()))
+            self.M += self.UK
             self.graph = [[0 for ny in range(self.N)] for nx in range(self.N)]
             self.E = []
             for m in range(self.M):
@@ -397,7 +398,7 @@ class HierarchyModel:
     def plot_partial_graph(self, action='save'):
         """ Plot graphs for edge unveiling. """
         uid = 200
-        while os.path.isfile(f'{uid}_{self.D.name}_ugraph.png'):
+        while os.path.isfile(f'{uid}_{self.D.name}.png'):
             uid += 1
 
         r = lambda: np.random.randint(low=0, high=256)
@@ -407,7 +408,7 @@ class HierarchyModel:
         for u, v in self.D.E:
             ng.add_edge(u, v, entropy='')
         for w in range(len(self.D.UK)):
-            ng.add_edge(self.D.UK[w][0], self.D.UK[w][1], entropy='{:.2f}'.format(self.action_entropys[w]))
+            ng.add_edge(self.D.UK[w][0], self.D.UK[w][1], entropy='{:.3f}'.format(self.action_entropys[w]))
         colormap = []
         for ee in ng.edges:
             if ee in self.D.UK:
@@ -421,7 +422,8 @@ class HierarchyModel:
         edge_labels = get_edge_attributes(ng, 'entropy')
         draw_networkx_edge_labels(ng, pos, edge_labels=edge_labels)
         if action == 'save':
-            plt.savefig(f'{uid}_{self.D.name}_ugraph.png')
+            plt.savefig(f'{uid}_{self.D.name}.png')
+            plt.close()
         elif action == 'show':
             plt.show()
 
@@ -442,6 +444,7 @@ class HierarchyModel:
         plt.plot(self.logpost_samples)
         if action == 'save':
             plt.savefig(f'{uid}_{self.D.name}_logpost.png')
+            plt.close()
         elif action == 'show':
             plt.show()
 
@@ -464,6 +467,7 @@ class HierarchyModel:
             draw_networkx(ng, node_color=node_colors)
             if action == 'save':
                 plt.savefig(f'{uid}_{self.D.name}_{bidx}hgraph.png')
+                plt.close()
             elif action == 'show':
                 plt.show()
 
@@ -492,38 +496,40 @@ class HierarchyModel:
         draw_networkx_edge_labels(ng, pos, edge_labels=edge_labels, font_color='red', font_weight='bold', font_size=14)
         if action == 'save':
             plt.savefig(f'christmas_{self.D.name}.png')
+            plt.close()
         elif action == 'show':
             plt.show()
 
-def demo1(fname):
+
+def demo1(fname, nsamples=5000, nburnin=100):
     """ Perform offline inference on a given (completely observed) graph and display results. """
     h = {'alpha': 1.5}
     D = Data(fname)
     hm = HierarchyModel(D, h)
-    hm.offline_sampler(nsamples=1000, nburnin=0)
+    hm.offline_sampler(nsamples=nsamples, nburnin=nburnin)
     hm.plot_graphs()
 
-def demo2(fname, inference_type='offline'):
+def demo2(fname, inference_type='offline', nsamples=5000, nburnin=1000):
     """ Perform online inference on a partially observed graph, and make a decision on which edge to unveil next. """
     h = {'alpha': 1.5}
     D = Data(fname, fully_observed=False)
     hm = HierarchyModel(D, h)
     if inference_type == 'offline':
-        hm.offline_sampler(inference_type='online')
-        # print('Top particles after offline sampling:')
-        # for top in hm.best_hsamples[-5:]:
-        #     print(top[0])
+        hm.offline_sampler(nsamples=nsamples, nburnin=nburnin, inference_type='online')
+        print('Top particles after offline sampling:')
+        for top in hm.best_hsamples[-5:]:
+            print(top[0])
 
         # Testing with MAP.
-        hm.particles = []
-        for top in hm.best_hsamples[round(0.9 * len(hm.best_hsamples)):]:
-            hm.particles.append(top)
-            print(top[0])
-        hm.NP = len(hm.particles)
-        hm.weights = np.array([1 / hm.NP for _ in range(hm.NP)])
-        print('Unveiling edges...')
-        hm.unveil()
-        hm.plot_partial_graph()
+        # hm.particles = []
+        # for top in hm.best_hsamples[round(0.9 * len(hm.best_hsamples)):]:
+        #     hm.particles.append(top)
+        #     print(top[0])
+        # hm.NP = len(hm.particles)
+        # hm.weights = np.array([1 / hm.NP for _ in range(hm.NP)])
+        # print('Unveiling edges...')
+        # hm.unveil()
+        # hm.plot_partial_graph()
 
         # Testing with full offline posterior.
         hm.particles = hm.best_hsamples
@@ -541,13 +547,30 @@ def demo2(fname, inference_type='offline'):
         hm.unveil()
         hm.plot_partial_graph()
 
+def demo3(fname):
+    """ Plot Christmas graphs. """
+    h = {'alpha': 1.5}
+    D = Data(fname, fully_observed=False)
+    hm = HierarchyModel(D, h)
+    hm.plot_christmas_graph()
 
-#demo1('data/demon.txt')
-demo2('data/partial_demon.txt', 'online')
-#demo2('data/partial_hourglass.txt')
-#demo2('data/partial_solway1.txt')
-#demo2('data/partial_solway2.txt')
 
+# flist = ['data/square.txt', 'data/linear.txt', 'data/parallel.txt', 'data/paris.txt', 'data/inception.txt', 'data/partial_solway1.txt', 'data/partial_demon.txt']
+# flist = ['data/inception.txt']
+# for file in flist:
+#     demo1(file)
+#     for _ in range(15):
+#         demo2(file)
+#     demo3(file)
+
+
+# 1: Square (A is diag)
+# 2: Linear (A is isolated)
+# 3: Parallel (A is 1-6, B is center): [1 for _ in range(8)] + [0.5 for _ in range(10)] + [0 for _ in range(7)]
+# 4: Demon (A connects stars)
+# 5: Paris (A is inner circle): [1 for _ in range(13)] + [0.5 for _ in range(12)]
+# 6: Solway (A is smaller, B is center)
+# 7: Inception (A is center, B is next, C is smallest)
 def plot_model_results(action='save'):
     """ Plot model results. """
     plt.figure()
@@ -555,20 +578,24 @@ def plot_model_results(action='save'):
     plt.rc('axes',titlesize=14)
     plt.rc('axes',labelsize=14)
     plt.title(f'Model Results')
-    plt.xlabel('Graph')
     plt.ylabel('Fraction of Trials where Edge A unveiled')
     ax = plt.gca()
-    #plt.bar()
-    #plt.xticks()
-    low95, high95 = stats.binom.ppf(0.025,n=50, p=0.5) / 50, stats.binom.ppf(0.975,n=50, p=0.5) / 50
-    plt.axhline(y=low95, alpha=0.4, color='red')
-    plt.axhline(y=high95, alpha=0.4, color='red')
-    ax.axhspan(low95, high95, facecolor='red', alpha=0.4)
-    plt.axhline(y=0.5, linestyle='--', color='black')
-    if action == 'save':
-        plt.savefig('model_results.png')
-    elif action == 'show':
+    plt.ylim((0.0, 1.2))
+    plt.xlim((0.0, 5))
+    results = [1/3 for _ in range(2)] + [0 for _ in range(23)]
+    N = len(results)
+    assert(N == 25)
+    ax.bar([2.5], [sum(results)/N], yerr=[np.std(results, ddof=1) /(N ** 0.5)], width=0.6, color='#07538F')
+    plt.xticks([2.5], ['Graph 7'])
+    low95, high95 = stats.binom.ppf(0.025,n=N, p=1/3) / N, stats.binom.ppf(0.975,n=N, p=1/3) / N
+    plt.axhline(y=low95, alpha=0.4, color='#7D8491')
+    plt.axhline(y=high95, alpha=0.4, color='#7D8491')
+    ax.axhspan(low95, high95, facecolor='#7D8491', alpha=0.4)
+    plt.axhline(y=1/3, linestyle='--', color='black')
+    if action == 'show':
         plt.show()
+    else:
+        plt.savefig(action)
 
-#plot_model_results('show')
+plot_model_results('graph7.png')
 
