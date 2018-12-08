@@ -1,4 +1,4 @@
-
+import pandas as pd
 import sys, os
 import numpy as np
 import scipy.stats as stats
@@ -755,3 +755,67 @@ def plot_variance():
 #plot_confidence()
 #plot_variance()
 
+hdata = pd.read_csv('../human_data.csv')
+
+def plot_human_results(gnum, N=40, action='save'):
+    """ Plot model results. """
+    plt.figure()
+    plt.rc('font',size=14)
+    plt.rc('axes',titlesize=14)
+    plt.rc('axes',labelsize=14)
+    plt.title(f'Human Results')
+    if gnum == 6:
+        edge = 'B'
+    else:
+        edge = 'A'
+    results = []
+    if gnum in set([3, 6, 7]):
+        perc = 1/3
+    else:
+        perc = 0.5
+    plt.ylabel(f'Fraction of Trials where Edge {edge} unveiled')
+    ax = plt.gca()
+    plt.ylim((0.0, 1.2))
+    plt.xlim((0.0, 5))
+    edgenum = len(hdata[hdata['G' + str(gnum)] == edge])
+    results = [1 for _ in range(edgenum)] + [0 for _ in range(N-edgenum)]
+    assert(len(results) == N)
+    ax.bar([2.5], [sum(results)/N], yerr=[np.std(results, ddof=1) /(N ** 0.5)], width=0.6, color='#07538F')
+    plt.xticks([2.5], [f'Graph {gnum}'])
+    low95, high95 = stats.binom.ppf(0.025,n=N, p=perc) / N, stats.binom.ppf(0.975,n=N, p=perc) / N
+    plt.axhline(y=low95, alpha=0.4, color='#7D8491')
+    plt.axhline(y=high95, alpha=0.4, color='#7D8491')
+    ax.axhspan(low95, high95, facecolor='#7D8491', alpha=0.4)
+    plt.axhline(y=perc, linestyle='--', color='black')
+    if action == 'show':
+        plt.show()
+    else:
+        plt.savefig(action)
+
+# for i in range(1, 8):
+#     plot_human_results(i, action='results/g' + str(i) + '_human.png')
+
+def plot_human_variance(N=40):
+    variances = []
+    for gnum in range(1, 8):
+        if gnum == 6:
+            edge = 'B'
+        else:
+            edge = 'A'
+        edgenum = len(hdata[hdata['G' + str(gnum)] == edge])
+        results = [1 for _ in range(edgenum)] + [0 for _ in range(N-edgenum)]
+        variances.append(np.var(results))
+    variances = np.log(variances)
+    plt.figure(figsize=(10, 2))
+    colors = ['#07538F','#07538F','#07538F','#07538F','#07538F','#07538F','#07538F']
+    labels = ['1', '2', '3', '4', '5', '6', '7']
+    plt.scatter(variances, np.zeros_like(variances), c=colors, cmap="hot_r", vmin=-2)
+    for label, x, y in zip(labels, variances, [0,0,0,0,0,0,0]):
+        if int(label) == 3 or int(label) == 1:
+            plt.annotate(label, xy=(x, y), xytext=(0, 10 + 5 * int(label) + 3), textcoords='offset points')
+        else:
+            plt.annotate(label, xy=(x, y), xytext=(0, 10), textcoords='offset points')
+    plt.yticks([])
+    plt.savefig('results/human_variances.png')
+
+plot_human_variance()
