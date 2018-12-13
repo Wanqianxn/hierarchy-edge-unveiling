@@ -613,9 +613,8 @@ def run_model():
             print(kk)
         print('COUNT ', count)
 
-#geth()
-#run_model()
-
+#hdata = pd.read_csv('human/human_data.csv')
+#hdata = [34, 19, 31, 34, 10, 37,  6]
 #mdata = [21, 31,  5, 30, 18, 28, 14] # alpha = 2.0, no extra terms, 100-100
 #mdata = [19, 25, 18, 25, 14, 30, 26] # alpha = 2.0, no extra terms, 10-10
 #mdata = [20, 20, 22, 27,  6, 17, 17] # alpha = 2.0, extra terms, 10-10
@@ -688,11 +687,6 @@ def plot_model_results(N=40, action='save'):
     else:
         plt.savefig('results/model_3e.png')
 
-#plot_model_results(action='save')
-
-# hdata = pd.read_csv('human/human_data.csv')
-#hdata = [34, 19, 31, 34, 10, 37,  6]
-
 def plot_human_results(N=40, action='save'):
     """ Plot model results. """
 
@@ -760,26 +754,23 @@ def plot_human_results(N=40, action='save'):
     else:
         plt.savefig('results/human_3e.png')
 
-#plot_human_results(action='save')
-
-
-with open('ppp.txt', 'w') as f:
-    hdata = [34, 19, 31, 34, 10, 37,  6]
-    mdata = [20,  3, 27, 30,  5, 33, 11]
-    for i in range(7):
-        if i == 2 or i == 5 or i == 6:
-            s = stats.binom_test(hdata[i], 40, 1.0/3.0, alternative='two-sided')
-        else:
-            s = stats.binom_test(hdata[i], 40, 0.5, alternative='two-sided')
-        f.write(str(s) + '\n')
-    f.write('\n')
-    for i in range(7):
-        if i == 2 or i == 5 or i == 6:
-            s = stats.binom_test(mdata[i], 40, 1.0/3.0, alternative='two-sided')
-        else:
-            s = stats.binom_test(mdata[i], 40, 0.5, alternative='two-sided')
-        f.write(str(s) + '\n')
-
+def compute_pvalues():
+    with open('pvals.txt', 'w') as f:
+        hdata = [34, 19, 31, 34, 10, 37,  6]
+        mdata = [20,  3, 27, 30,  5, 33, 11]
+        for i in range(7):
+            if i == 2 or i == 5 or i == 6:
+                s = stats.binom_test(hdata[i], 40, 1.0/3.0, alternative='two-sided')
+            else:
+                s = stats.binom_test(hdata[i], 40, 0.5, alternative='two-sided')
+            f.write(str(s) + '\n')
+        f.write('\n')
+        for i in range(7):
+            if i == 2 or i == 5 or i == 6:
+                s = stats.binom_test(mdata[i], 40, 1.0/3.0, alternative='two-sided')
+            else:
+                s = stats.binom_test(mdata[i], 40, 0.5, alternative='two-sided')
+            f.write(str(s) + '\n')
 
 def plot_confidence():
     ratios = []
@@ -870,3 +861,6 @@ def plot_human_variance(N=40):
             plt.annotate(label, xy=(x, y), xytext=(0, 10), textcoords='offset points')
     plt.yticks([])
     plt.savefig('results/human_variances.png')
+
+
+
