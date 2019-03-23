@@ -6,23 +6,25 @@ import matplotlib.pyplot as plt
 
 from networkx import Graph, spring_layout, draw_networkx, draw_networkx_edge_labels, get_edge_attributes
 
-"""
-1: Square (A is diag)
-2: Linear (A is isolated)
-3: Parallel (A is 1-6, B is center): [1 for _ in range(8)] + [0.5 for _ in range(10)] + [0 for _ in range(7)]
-4: Demon (A connects stars)
-5: Paris (A is inner circle): [1 for _ in range(13)] + [0.5 for _ in range(12)]
-6: Solway (A is smaller, B is center)
-7: Inception (A is center, B is next, C is smallest)
 
-# 2018 data
-hdata = pd.read_csv('human/human_data.csv')
-hdata = [34, 19, 31, 34, 10, 37,  6]
-mdata = [21, 31,  5, 30, 18, 28, 14] # alpha = 2.0, no extra terms, 100-100
-mdata = [19, 25, 18, 25, 14, 30, 26] # alpha = 2.0, no extra terms, 10-10
-mdata = [20, 20, 22, 27,  6, 17, 17] # alpha = 2.0, extra terms, 10-10
-mdata = [20,  3, 27, 30,  5, 33, 11] # alpha = 2.0, extra terms, 100-100
 """
+5000 burn-in, 50 (100) lag, 100 samples --> 10000 iters
+alpha 1.0, 1.5, 2.0, 3.0
+"""
+
+
+# Comments:
+# 0. Theory in: https://github.com/tomov/chunking/blob/28aefc5ff5066fb0c9b626d0bbfee35b6bd8fdbf/math/chunking.pdf
+# 1. Don't think re-using buckets allowed for MHwG (not that the difference is huge I think): http://www.stat.columbia.edu/npbayes/papers/neal_sampling.pdf
+# 2a. Given partially observed data, do we ever observe "not an edge"? Or observation always positive? Are nodes always observed?
+### Ans: We do, otherwise the trivial flat hierarchy always dominates. Not quite realistic for human behaviour though.
+# 2b. Should online updating be done edge by edge?
+### Ans: Shouldn't matter if no rejuvenation.
+# 3. When rejuvenating, how to/should we update weights?
+### Ans: After running MHwG, sample from rejuvenated particles using weights as multinomial dist, then set new weights to 1/NP.
+# 4. Eq. (9) which way to calculate log P(H|D) -- update weights or recalculate whole posterior?
+### Ans: For online, both should be equivalent if not rejuvenating. Full posterior safer. Use full posterior for offline sampling.
+
 
 class Data:
     """ Defines a low-level graph G = (V, E). """
@@ -272,12 +274,12 @@ class HierarchyModel:
             # Statistics and collection.
             self.logpost_samples.append(self.log_posterior(with_unknown=with_unknown))
             if t < nburnin:
-                if (t + 1) % 1000 == 0:
+                if (t + 1) % 100 == 0:
                     print(f'{t+1} samples burnt-in. Acceptance rate: {100 * (self.accepts / ((t+1) * (self.D.N + 2))):.2f}%.')
             else:
                 if (t + 1 - nburnin) % nsampintv == 0:
                     self.hsamples[t] = (self.c.copy(), self.cnt.copy(), self.p, self.q, self.hp)
-                if (t + 1 - nburnin) % (1000 * nsampintv) == 0:
+                if (t + 1 - nburnin) % (100 * nsampintv) == 0:
                     print(f'{(t + 1 - nburnin) / nsampintv} samples collected. Acceptance rate: {100 * (self.accepts / ((t+1) * (self.D.N + 3))):.2f}%.')
 
         self.bestk_samples(nburnin, nsamples, nsampintv)
@@ -548,13 +550,13 @@ def demo1(fname, nsamples=500, nburnin=0, alpha=2.0):
         hm.plot_graphs()
         hm.D.E = hm.D.E[:-1]
 
-def demo2(fname, inference_type='offline', nsamples=100, nburnin=100, nlag=10, alpha=2.0):
+def demo2(fname, inference_type='offline', nsamples=100, nburnin=100, alpha=2.0):
     """ Perform online inference on a partially observed graph, and make a decision on which edge to unveil next. """
     h = {'alpha': alpha}
     D = Data(fname, fully_observed=False)
     hm = HierarchyModel(D, h)
     if inference_type == 'offline':
-        hm.offline_sampler(nsamples=nsamples, nburnin=nburnin, nsampintv=nlag)
+        hm.offline_sampler(nsamples=nsamples, nburnin=nburnin)
         #print('Top particles after offline sampling:')
         #for top in hm.best_hsamples[-5:]:
         #    print(top[0])
@@ -563,29 +565,45 @@ def demo2(fname, inference_type='offline', nsamples=100, nburnin=100, nlag=10, a
         hm.weights = np.array([1 / hm.NP for _ in range(hm.NP)])
     else:
         hm.online_sampler(NP=nsamples)
-        #print('Top particles after online sampling:')
-        #for top in np.argsort(hm.weights)[-5:]:
-        #    print(hm.particles[top][0])
+        print('Top particles after online sampling:')
+        for top in np.argsort(hm.weights)[-5:]:
+            print(hm.particles[top][0])
     #print('Unveiling edges...')
     hm.unveil()
 
     # Statistics
     #hm.plot_partial_graph()
     namekey = fname.split('/')[1].split('.')[0]
-    with open(f'2019_results/results2_{namekey}.txt', 'a+') as f:
+    with open(f'results/results_{namekey}.txt', 'a') as f:
         for j in range(len(hm.D.UK)):
             f.write(f'Edge {hm.D.UK[j]}: {hm.action_entropys[j]}\n')
         f.write('\n')
     f.close()
     return hm.action_entropys
 
-def run_model(to_run, hp, repeats=40):
+# 1: Square (A is diag)
+# 2: Linear (A is isolated)
+# 3: Parallel (A is 1-6, B is center): [1 for _ in range(8)] + [0.5 for _ in range(10)] + [0 for _ in range(7)]
+# 4: Demon (A connects stars)
+# 5: Paris (A is inner circle): [1 for _ in range(13)] + [0.5 for _ in range(12)]
+# 6: Solway (A is smaller, B is center)
+# 7: Inception (A is center, B is next, C is smallest)
+
+def geth():
     flist = []
-    names = ['square', 'linear', 'parallel', 'partial_demon', 'paris', 'partial_solway1', 'inception']
-    edgenums = [0, 1, 1, 0, 1, 0, 1]
-    for n in to_run:
-        flist.append((f'data/{names[n-1]}.txt', edgenums[n-1]))
-    #flist.append(('data/linear.txt', 0))    #A
+    #flist.append(('data/square.txt', 0)) #A
+    #flist.append(('data/linear.txt', 1)) #A
+    #flist.append(('data/parallel.txt', 1)) #B
+    #flist.append(('data/partial_demon.txt', 0)) #A
+    #flist.append(('data/paris.txt', 0)) #A
+    #flist.append(('data/partial_solway1.txt', 0)) #B
+    flist.append(('data/inception.txt', 1)) #B
+    for file, num in flist:
+        demo1(file)
+
+def run_model():
+    flist = []
+    flist.append(('data/square.txt', 0)) #A
     #flist.append(('data/linear.txt', 1)) #A
     #flist.append(('data/parallel.txt', 1)) #B
     #flist.append(('data/partial_demon.txt', 0)) #A
@@ -593,14 +611,20 @@ def run_model(to_run, hp, repeats=40):
     #flist.append(('data/partial_solway1.txt', 0)) #B
     #flist.append(('data/inception.txt', 1)) #B
     for file, num in flist:
-        print(file)
         count = 0
-        for i in range(repeats):
-            entropys = demo2(file, nsamples=hp['nsamples'], nburnin=hp['nburnin'], nlag=hp['nlag'], alpha=hp['alpha'])
+        for kk in range(40):
+            entropys = demo2(file)
             if min(entropys) == entropys[num]:
                 count += 1
-            print(f'{i}')
-        print('\nCount: ', count)
+            print(kk)
+        print('COUNT ', count)
+
+#hdata = pd.read_csv('human/human_data.csv')
+#hdata = [34, 19, 31, 34, 10, 37,  6]
+#mdata = [21, 31,  5, 30, 18, 28, 14] # alpha = 2.0, no extra terms, 100-100
+#mdata = [19, 25, 18, 25, 14, 30, 26] # alpha = 2.0, no extra terms, 10-10
+#mdata = [20, 20, 22, 27,  6, 17, 17] # alpha = 2.0, extra terms, 10-10
+#mdata = [20,  3, 27, 30,  5, 33, 11] # alpha = 2.0, extra terms, 100-100
 
 def plot_model_results(N=40, action='save'):
     """ Plot model results. """
@@ -635,7 +659,7 @@ def plot_model_results(N=40, action='save'):
     if action == 'show':
         plt.show()
     else:
-        plt.savefig('2019_results/model_2e.png')
+        plt.savefig('results/model_2e.png')
 
     # 3 edges.
     plt.figure()
@@ -667,7 +691,7 @@ def plot_model_results(N=40, action='save'):
     if action == 'show':
         plt.show()
     else:
-        plt.savefig('2019_results/model_3e.png')
+        plt.savefig('results/model_3e.png')
 
 def plot_human_results(N=40, action='save'):
     """ Plot model results. """
@@ -787,58 +811,62 @@ def plot_confidence():
     plt.yticks([])
     plt.savefig('confidence.png')
 
+def plot_variance():
+    variances = []
+    for i in range(1, 8):
+        ai = globals()['A' + str(i)]
+        bi = globals()['B' + str(i)]
+        assert(len(ai) == 25)
+        assert(len(bi) == 25)
+        ai = np.array(ai)
+        bi = np.array(bi)
+        try:
+            ci = globals()['C' + str(i)]
+            assert(len(ci) == 25)
+            ci = np.array(ci)
+        except:
+            ci = None
+        vai = np.var(ai)
+        vbi = np.var(bi)
+        if type(ci) != type(None):
+            vci = np.var(ci)
+            meanvar = np.mean([vai, vbi, vci])
+        else:
+            meanvar = np.mean([vai, vbi])
+        variances.append(meanvar)
+    variances = np.log(variances)
 
-######################
-## Run model
-######################
+    plt.figure(figsize=(10, 2))
+    colors = ['#07538F','#07538F','#07538F','#07538F','#07538F','#07538F','#07538F']
+    labels = ['1', '2', '3', '4', '5', '6', '7']
+    plt.scatter(variances, np.zeros_like(variances), c=colors, cmap="hot_r", vmin=-2)
+    for label, x, y in zip(labels, variances, [0,0,0,0,0,0,0]):
+        plt.annotate(label, xy=(x, y), xytext=(0, 10), textcoords='offset points')
+    plt.yticks([])
+    plt.savefig('variances.png')
 
-# Hyperparameters to try:
-# 5000 burn-in, 50 (100) lag, 100 samples --> 10000 iters
-# alpha 1.0, 1.5, 2.0, 3.0
-
-#hyperparams = {'nsamples': 100, 'nburnin': 5000, 'nlag': 50, 'alpha': 1.0}
-#run_model(to_run=[7], hp=hyperparams)
-#plot_model_results()
-
-# Results
-# Human    {34, 19, 31, 34, 10, 37, 06}
-# 1.0      {36, 00, 29, 37, 00, 31, 12}
-# 1.0e1.0  {20, 00, 29, 26, 00, 31, 12}
-# 1.0e0.6  {17, 12, 22, 28, 09, 24, 16}
-# 1.0e0.8  {15, 05, 24, 28, 07, 27, 12}
-names = ['square', 'linear', 'parallel', 'demon', 'paris', 'solway', 'inception']
-choices = [2, 2, 3, 2, 2, 3, 3]
-choose = ['A', 'A', 'B', 'A', 'A', 'B', 'B']
-mdata = []
-mdata.append('ssssssBsssssBsssssssssssssssssBsssssBsss')
-mdata.append('BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB')
-mdata.append('BCABBCBBABBBBCBBABCBBBBABCBBBBBBBBCBBBBC')
-mdata.append('AssBsBsAAsAsssAssAssAAssAsssAsBAAssAsAAA')
-mdata.append('BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB')
-mdata.append('BBBBBBBAAABBBBBBABABBCBBBBABBBBBBBCBBCBB')
-mdata.append('BBAABAAAAABAABBAABABBAAAAABBABAAAAAAAAAA')
-# inception_extra = 'AABBAABABAA'
+def plot_human_variance(N=40):
+    variances = []
+    for gnum in range(1, 8):
+        if gnum == 6:
+            edge = 'B'
+        else:
+            edge = 'A'
+        edgenum = len(hdata[hdata['G' + str(gnum)] == edge])
+        results = [1 for _ in range(edgenum)] + [0 for _ in range(N-edgenum)]
+        variances.append(np.var(results))
+    variances = np.log(variances)
+    plt.figure(figsize=(10, 2))
+    colors = ['#07538F','#07538F','#07538F','#07538F','#07538F','#07538F','#07538F']
+    labels = ['1', '2', '3', '4', '5', '6', '7']
+    plt.scatter(variances, np.zeros_like(variances), c=colors, cmap="hot_r", vmin=-2)
+    for label, x, y in zip(labels, variances, [0,0,0,0,0,0,0]):
+        if int(label) == 3 or int(label) == 1:
+            plt.annotate(label, xy=(x, y), xytext=(0, 10 + 5 * int(label) + 3), textcoords='offset points')
+        else:
+            plt.annotate(label, xy=(x, y), xytext=(0, 10), textcoords='offset points')
+    plt.yticks([])
+    plt.savefig('results/human_variances.png')
 
 
-def explore(mdata, choices, choose, names, epsilon=0.6, N=40):
-    edata = []
-    for i in range(7):
-        mgraph = list(mdata[i])
-        assert(len(mgraph) == N)
-        echoices = ''
-        for k in range(N):
-            if stats.uniform.rvs() < 1 - epsilon:
-                echoices += chr(65 + np.random.randint(choices[i]))
-            else:
-                if mgraph[k] == 's':
-                    echoices += chr(65 + np.random.randint(choices[i]))
-                else:
-                    echoices += mgraph[k]
-        assert(len(echoices) == N)
-        edata.append(echoices)
-    for i in range(7):
-        count = len(list(filter(lambda v: v == choose[i], list(edata[i]))))
-        print(f'{names[i]}: {count} ({edata[i]})')
-    return edata
 
-explore(mdata, choices, choose, names, 1.0)
