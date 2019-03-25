@@ -602,7 +602,7 @@ def run_model(to_run, hp, repeats=40):
             print(f'{i}')
         print('\nCount: ', count)
 
-def plot_model_results(N=40, action='save'):
+def plot_model_results(mdata, fname, N=40, action='save'):
     """ Plot model results. """
 
     # 2 edges.
@@ -635,7 +635,7 @@ def plot_model_results(N=40, action='save'):
     if action == 'show':
         plt.show()
     else:
-        plt.savefig('2019_results/model_2e.png')
+        plt.savefig(f'2019_results/model_2e_{fname}.png')
 
     # 3 edges.
     plt.figure()
@@ -667,7 +667,7 @@ def plot_model_results(N=40, action='save'):
     if action == 'show':
         plt.show()
     else:
-        plt.savefig('2019_results/model_3e.png')
+        plt.savefig(f'2019_results/model_3e_{fname}.png')
 
 def plot_human_results(N=40, action='save'):
     """ Plot model results. """
@@ -801,11 +801,14 @@ def plot_confidence():
 #plot_model_results()
 
 # Results
-# Human    {34, 19, 31, 34, 10, 37, 06}
-# 1.0      {36, 00, 29, 37, 00, 31, 12}
-# 1.0e1.0  {20, 00, 29, 26, 00, 31, 12}
-# 1.0e0.6  {17, 12, 22, 28, 09, 24, 16}
-# 1.0e0.8  {15, 05, 24, 28, 07, 27, 12}
+# Human     {34, 19, 31, 34, 10, 37, 06}
+# 1.0e1.0   {36, 00, 29, 37, 00, 31, 12}
+# 1.0e0.8   {33, 03, 26, 34, 05, 30, 11}
+# 1.0e0.6   {32, 09, 29, 33, 07, 24, 10}
+# 1.0te1.0  {20, 00, 29, 26, 00, 31, 12}
+# 1.0te0.8  {15, 05, 24, 28, 07, 27, 12}
+# 1.0te0.6  {17, 12, 22, 28, 09, 24, 16}
+
 names = ['square', 'linear', 'parallel', 'demon', 'paris', 'solway', 'inception']
 choices = [2, 2, 3, 2, 2, 3, 3]
 choose = ['A', 'A', 'B', 'A', 'A', 'B', 'B']
@@ -820,7 +823,7 @@ mdata.append('BBAABAAAAABAABBAABABBAAAAABBABAAAAAAAAAA')
 # inception_extra = 'AABBAABABAA'
 
 
-def explore(mdata, choices, choose, names, epsilon=0.6, N=40):
+def explore(mdata, choices, choose, names, to_tiebreak=False, epsilon=0.6, N=40):
     edata = []
     for i in range(7):
         mgraph = list(mdata[i])
@@ -831,7 +834,10 @@ def explore(mdata, choices, choose, names, epsilon=0.6, N=40):
                 echoices += chr(65 + np.random.randint(choices[i]))
             else:
                 if mgraph[k] == 's':
-                    echoices += chr(65 + np.random.randint(choices[i]))
+                    if to_tiebreak:
+                        echoices += chr(65 + np.random.randint(choices[i]))
+                    else:
+                        echoices += choose[i]
                 else:
                     echoices += mgraph[k]
         assert(len(echoices) == N)
@@ -841,4 +847,5 @@ def explore(mdata, choices, choose, names, epsilon=0.6, N=40):
         print(f'{names[i]}: {count} ({edata[i]})')
     return edata
 
-explore(mdata, choices, choose, names, 1.0)
+#explore(mdata, choices, choose, names, False, 0.6)
+plot_model_results([17, 12, 22, 28, 9, 24, 16], 'tiebreak_eps60', N=40, action='save')
